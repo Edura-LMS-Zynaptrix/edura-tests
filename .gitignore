@@ -1,0 +1,17 @@
+# Python test execution caches and logs
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.htmlcov/
+
+# Logs and test outputs
+*.log
+test-reports/
+
+# Local settings / environment files
+.env
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
