@@ -26,4 +26,26 @@ jobs:
 
       - name: Syntax & Lint Check
         run: |
-          python -m py_compile smoke/critical_path.py
+          python -m py_compile smoke/critical_path.py integration/test_payment_enrollment_flow.py
+
+  integration-test:
+    name: Payment & Enrollment Integration Tests
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.base_ref == 'develop' || github.base_ref == 'main'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Integration Tests
+        run: |
+          pytest integration/test_payment_enrollment_flow.py -v
