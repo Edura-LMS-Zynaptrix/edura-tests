@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
 E2E Critical Path Smoke Test for EDURA Platform (DDP-#24)
-Covers: student register → OTP verify → login → course list → checkout → webhook → active enrollment → lesson stream → assessment start → progress view.
+Covers: student register → email verification → login → course list → checkout → webhook →
+active enrollment → lesson stream → assessment start → progress view.
 Target: Staging API (STAGING_API_URL, default: http://localhost)
+
+The script runs against the live gateway with a fresh test account and removes what it
+created afterwards (AC2). It needs the staging SECRET_KEY (to sign the email-verification
+link and the cleanup admin token, exactly as auth_service does) and the PayHere merchant
+credentials (to sign the mock webhook).
 """
 
 import hashlib
@@ -10,7 +16,8 @@ import os
 import sys
 import time
 import uuid
-from typing import Any, Dict, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import httpx
 import jwt
@@ -21,10 +28,18 @@ import jwt
 BASE_URL = os.getenv("STAGING_API_URL", "http://localhost").rstrip("/")
 PAYHERE_MERCHANT_ID = os.getenv("PAYHERE_MERCHANT_ID", "sandbox_merchant_12345")
 PAYHERE_MERCHANT_SECRET = os.getenv("PAYHERE_MERCHANT_SECRET", "sandbox_secret_abcdef")
-SMOKE_TEST_OTP = os.getenv("SMOKE_TEST_OTP", "123456")
 JWT_SECRET_KEY = os.getenv("SECRET_KEY", "edura_super_secret_jwt_key_2026_dev")
 JWT_ALGORITHM = "HS256"
+# Resend's test inbox: accepts any "+label", delivers nothing and never bounces,
+# so the verification email auth_service sends on sign-up doesn't hurt the sender domain.
+SMOKE_EMAIL_DOMAIN = os.getenv("SMOKE_EMAIL_DOMAIN", "resend.dev")
+SMOKE_EMAIL_USER = os.getenv("SMOKE_EMAIL_USER", "delivered")
+# Any valid-looking ID: content_service only builds the embed URL from it.
+SMOKE_YOUTUBE_VIDEO_ID = os.getenv("SMOKE_YOUTUBE_VIDEO_ID", "M7lc1UVf-VE")
 REQUEST_TIMEOUT = 30.0
+# Enrollment and access reach other services through RabbitMQ events, so the
+# steps that depend on them retry for a while instead of failing on the first try.
+EVENT_WAIT_SECONDS = int(os.getenv("SMOKE_EVENT_WAIT_SECONDS", "30"))
 
 # ANSI Color Codes for Clear Reporting
 GREEN = "\033[92m"
@@ -50,12 +65,27 @@ def print_step_failure(step_num: int, title: str, status_code: int, response_bod
 
 
 def generate_admin_token() -> str:
-    """Generates an administrative JWT token for cleanup actions."""
+    """An admin access token signed like auth_service's, for the cleanup calls."""
+    now = datetime.now(timezone.utc)
     payload = {
-        "sub": "1",
-        "email": "admin@edura.lk",
-        "role": "admin",
-        "exp": int(time.time()) + 3600,
+        "sub": "0",
+        "email": "smoke-test@edura.lk",
+        "role": "ADMIN",
+        "iat": now,
+        "exp": now + timedelta(minutes=15),
+    }
+    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+
+def generate_email_verification_token(user_id: int, email: str) -> str:
+    """The same signed token auth_service puts in the verification email link."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user_id),
+        "purpose": "email_verification",
+        "email": email,
+        "iat": now,
+        "exp": now + timedelta(minutes=15),
     }
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
@@ -74,6 +104,68 @@ def calculate_payhere_signature(
     return hashlib.md5(raw.encode("utf-8")).hexdigest().upper()
 
 
+def retry_until(
+    attempt: Callable[[], httpx.Response],
+    done: Callable[[httpx.Response], bool],
+    seconds: int = EVENT_WAIT_SECONDS,
+) -> httpx.Response:
+    """Repeats a request (once a second) until done(response) or the time runs out."""
+    deadline = time.monotonic() + seconds
+    res = attempt()
+    while not done(res) and time.monotonic() < deadline:
+        time.sleep(1)
+        res = attempt()
+    return res
+
+
+def started(assessment: Dict[str, Any]) -> bool:
+    start = assessment.get("scheduled_start")
+    if not start:
+        return True
+    try:
+        return datetime.fromisoformat(start.replace("Z", "+00:00")) <= datetime.now(timezone.utc)
+    except ValueError:
+        return False
+
+
+def pick_course_and_assessment(
+    client: httpx.Client, headers: Dict[str, str]
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], str]:
+    """
+    A published course the critical path can walk end to end: paid (so the PayHere
+    checkout → webhook → enrollment path is exercised) with a published assessment
+    that has already opened. Falls back to any published course with such an assessment.
+    """
+    res = client.get(f"{BASE_URL}/api/courses/", params={"page_size": 100}, headers=headers)
+    if res.status_code != 200:
+        return None, None, f"GET /api/courses/ returned {res.status_code}: {res.text}"
+    data = res.json()
+    courses = data.get("items", []) if isinstance(data, dict) else data
+    if not courses:
+        return None, None, "No published courses on this environment"
+
+    def price(c: Dict[str, Any]) -> float:
+        try:
+            return float(c.get("price") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    # Paid courses first, then the rest; checked in order until one has a usable exam.
+    for course in sorted(courses, key=lambda c: price(c) <= 0):
+        res = client.get(
+            f"{BASE_URL}/api/assessments/", params={"course_id": course["id"]}, headers=headers
+        )
+        if res.status_code != 200:
+            continue
+        usable = [a for a in res.json() if a.get("is_published", True) and started(a)]
+        if usable:
+            return course, usable[0], ""
+    return None, None, (
+        f"None of the {len(courses)} published courses has a published assessment that "
+        "has already started; publish one on this environment"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Cleanup Function (AC2)
 # ---------------------------------------------------------------------------
@@ -84,67 +176,38 @@ def run_cleanup(
     course_id: Optional[int],
 ):
     """
-    Cleans up all test data (account, enrollments, payments) created during the test.
-    Guaranteed to run in finally block (pass or fail).
+    Removes the test data (enrollment, profile, account) through the admin API.
+    Guaranteed to run in the finally block (pass or fail).
     """
     print(f"\n{YELLOW}{BOLD}--- Running AC2 Test Cleanup ---{RESET}")
-    admin_token = generate_admin_token()
-    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+    admin_headers = {"Authorization": f"Bearer {generate_admin_token()}"}
 
-    # 1. Delete test enrollment records
+    def call(label: str, method: str, path: str, **kwargs):
+        try:
+            resp = client.request(
+                method, f"{BASE_URL}{path}", headers=admin_headers, timeout=REQUEST_TIMEOUT, **kwargs
+            )
+            print(f"  {label}: HTTP {resp.status_code}")
+        except Exception as e:
+            print(f"  {YELLOW}Warning: {label} failed: {e}{RESET}")
+
+    # 1. Enrollment: revoked (kept as a CANCELLED record, as the admin UI does).
+    if student_id and course_id:
+        call(
+            f"Revoke enrollment (student_id={student_id}, course_id={course_id})",
+            "DELETE",
+            "/api/enrollments/admin/revoke",
+            params={"user_id": student_id, "course_id": course_id},
+        )
+
+    # 2. Payment: payment_service has no delete endpoint; the record stays as an audit trail.
+    if order_id:
+        print(f"  Payment {order_id}: kept (payment_service exposes no delete endpoint)")
+
+    # 3. Profile in user_service, then the login in auth_service.
     if student_id:
-        try:
-            resp = client.delete(
-                f"{BASE_URL}/api/enrollments/",
-                params={"student_id": student_id, "course_id": course_id} if course_id else {"student_id": student_id},
-                headers=admin_headers,
-                timeout=REQUEST_TIMEOUT,
-            )
-            print(f"  Cleanup enrollments (student_id={student_id}): HTTP {resp.status_code}")
-        except Exception as e:
-            print(f"  {YELLOW}Warning: Error deleting test enrollments: {e}{RESET}")
-
-    # 2. Delete test payment records
-    if student_id or order_id:
-        try:
-            params: Dict[str, Any] = {}
-            if student_id:
-                params["student_id"] = student_id
-            if order_id:
-                params["order_id"] = order_id
-            resp = client.delete(
-                f"{BASE_URL}/api/payments/",
-                params=params,
-                headers=admin_headers,
-                timeout=REQUEST_TIMEOUT,
-            )
-            print(f"  Cleanup payments (student_id={student_id}, order_id={order_id}): HTTP {resp.status_code}")
-        except Exception as e:
-            print(f"  {YELLOW}Warning: Error deleting test payments: {e}{RESET}")
-
-    # 3. Delete user profile from user_service
-    if student_id:
-        try:
-            resp = client.delete(
-                f"{BASE_URL}/api/users/{student_id}",
-                headers=admin_headers,
-                timeout=REQUEST_TIMEOUT,
-            )
-            print(f"  Cleanup user profile (student_id={student_id}): HTTP {resp.status_code}")
-        except Exception as e:
-            print(f"  {YELLOW}Warning: Error deleting user profile: {e}{RESET}")
-
-    # 4. Delete user account from auth_service
-    if student_id:
-        try:
-            resp = client.delete(
-                f"{BASE_URL}/api/auth/users/{student_id}",
-                headers=admin_headers,
-                timeout=REQUEST_TIMEOUT,
-            )
-            print(f"  Cleanup auth user (student_id={student_id}): HTTP {resp.status_code}")
-        except Exception as e:
-            print(f"  {YELLOW}Warning: Error deleting auth user: {e}{RESET}")
+        call(f"Delete user profile (student_id={student_id})", "DELETE", f"/api/users/{student_id}")
+        call(f"Delete auth user (student_id={student_id})", "DELETE", f"/api/auth/users/{student_id}")
 
     print(f"{YELLOW}--- Cleanup Complete ---{RESET}\n")
 
@@ -158,24 +221,20 @@ def run_critical_path() -> bool:
     print(f"   Target URL: {CYAN}{BASE_URL}{RESET}")
     print(f"{BOLD}═══════════════════════════════════════════════════════════════════{RESET}")
 
-    unique_suffix = f"{int(time.time())}_{uuid.uuid4().hex[:6]}"
-    test_email = f"smoke_student_{unique_suffix}@example.com"
+    unique_suffix = f"{int(time.time())}{uuid.uuid4().hex[:6]}"
+    test_email = f"{SMOKE_EMAIL_USER}+smoke{unique_suffix}@{SMOKE_EMAIL_DOMAIN}"
     test_password = "SmokePassword123!"
 
     student_id: Optional[int] = None
-    access_token: Optional[str] = None
     course_id: Optional[int] = None
-    lesson_id: int = 1
-    assessment_id: int = 1
     order_id: Optional[str] = None
-    checkout_amount: float = 1000.00
-    checkout_currency: str = "LKR"
+    res: Optional[httpx.Response] = None
 
     client = httpx.Client(timeout=REQUEST_TIMEOUT, follow_redirects=True)
 
     try:
         # -------------------------------------------------------------------
-        # Step 1: POST /api/auth/register → 201
+        # Step 1: POST /api/auth/register → 200 (account created, unverified)
         # -------------------------------------------------------------------
         step = 1
         title = "POST /api/auth/register (New test student account)"
@@ -184,9 +243,10 @@ def run_critical_path() -> bool:
             "email": test_email,
             "password": test_password,
             "role": "student",
+            "profile": {"first_name": "Smoke", "last_name": "Test"},
         }
         res = client.post(f"{BASE_URL}/api/auth/register", json=reg_payload)
-        if res.status_code != 201:
+        if res.status_code not in (200, 201):
             print_step_failure(step, title, res.status_code, res.text)
             return False
 
@@ -198,21 +258,17 @@ def run_critical_path() -> bool:
         print_step_success(step, f"Registered student ID={student_id}, email={test_email}")
 
         # -------------------------------------------------------------------
-        # Step 2: POST /api/auth/otp/verify → 200
+        # Step 2: POST /api/auth/verify-email → 200 (the emailed verification link)
         # -------------------------------------------------------------------
         step = 2
-        title = "POST /api/auth/otp/verify (Verify student email OTP)"
+        title = "POST /api/auth/verify-email (Verify student email)"
         print_step_header(step, title)
-        otp_payload = {
-            "user_id": student_id,
-            "code": SMOKE_TEST_OTP,
-            "purpose": "email_verify",
-        }
-        res = client.post(f"{BASE_URL}/api/auth/otp/verify", json=otp_payload)
+        token = generate_email_verification_token(student_id, test_email)
+        res = client.post(f"{BASE_URL}/api/auth/verify-email", json={"token": token})
         if res.status_code != 200:
             print_step_failure(step, title, res.status_code, res.text)
             return False
-        print_step_success(step, "OTP verified successfully")
+        print_step_success(step, "Email verified with the signed verification link")
 
         # -------------------------------------------------------------------
         # Step 3: POST /api/auth/login → 200
@@ -238,31 +294,30 @@ def run_critical_path() -> bool:
         print_step_success(step, f"Access token received ({login_data.get('token_type', 'Bearer')})")
 
         # -------------------------------------------------------------------
-        # Step 4: GET /api/courses → 200, at least one PUBLISHED course
+        # Step 4: GET /api/courses → 200, a PUBLISHED course with an open assessment
         # -------------------------------------------------------------------
         step = 4
         title = "GET /api/courses (List published courses)"
         print_step_header(step, title)
-        res = client.get(f"{BASE_URL}/api/courses/", headers=auth_headers)
-        if res.status_code != 200:
-            print_step_failure(step, title, res.status_code, res.text)
+        course, assessment, why_not = pick_course_and_assessment(client, auth_headers)
+        if not course or not assessment:
+            print_step_failure(step, title, 200, why_not)
             return False
 
-        courses_data = res.json()
-        items = courses_data.get("items", []) if isinstance(courses_data, dict) else courses_data
-        if not items:
-            print_step_failure(step, title, res.status_code, "No courses found; expected at least one PUBLISHED course")
-            return False
-
-        first_course = items[0]
-        course_id = first_course.get("id")
-        course_title = first_course.get("title", "Untitled")
-        course_status = first_course.get("status", "")
-        checkout_amount = float(first_course.get("price", 1000.00))
+        course_id = course["id"]
+        assessment_id = assessment["id"]
+        try:
+            checkout_amount = float(course.get("price") or 0)
+        except (TypeError, ValueError):
+            checkout_amount = 0.0
         if checkout_amount <= 0:
             checkout_amount = 1000.00
-
-        print_step_success(step, f"Found course ID={course_id} '{course_title}' [Status: {course_status}]")
+        print_step_success(
+            step,
+            f"Found course ID={course_id} '{course.get('title', 'Untitled')}' "
+            f"[Status: {course.get('status', '')}, price {checkout_amount:.2f}] "
+            f"with assessment ID={assessment_id}",
+        )
 
         # -------------------------------------------------------------------
         # Step 5: POST /api/payments/checkout → 200, redirect_url returned
@@ -327,65 +382,67 @@ def run_critical_path() -> bool:
             f"{BASE_URL}/api/payments/webhook",
             data=webhook_data,
         )
-        if res.status_code != 200:
+        if res.status_code != 200 or res.json().get("status") != "SUCCESS":
             print_step_failure(step, title, res.status_code, res.text)
             return False
         print_step_success(step, f"Webhook accepted with valid HMAC MD5 signature: {res.json()}")
 
         # -------------------------------------------------------------------
-        # Step 7: GET /api/enrollments → 200, status ACTIVE
+        # Step 7: GET /api/enrollments/me → 200, enrollment ACTIVE
         # -------------------------------------------------------------------
         step = 7
-        title = "GET /api/enrollments (Verify active enrollment granted via event)"
+        title = "GET /api/enrollments/me (Verify active enrollment granted via event)"
         print_step_header(step, title)
 
-        # Allow up to 10 seconds for asynchronous RabbitMQ event processing
-        enrollment_verified = False
-        max_attempts = 10
-        enrollment_resp_data = None
+        def active_enrollment(r: httpx.Response) -> Optional[Dict[str, Any]]:
+            if r.status_code != 200:
+                return None
+            for e in r.json():
+                if e.get("course_id") == course_id and e.get("status") == "ACTIVE" and not e.get("module_id"):
+                    return e
+            return None
 
-        for attempt in range(1, max_attempts + 1):
-            time.sleep(1)
-            res = client.get(
-                f"{BASE_URL}/api/enrollments/",
-                params={"student_id": student_id, "course_id": course_id},
-                headers=auth_headers,
+        res = retry_until(
+            lambda: client.get(
+                f"{BASE_URL}/api/enrollments/me", params={"course_id": course_id}, headers=auth_headers
+            ),
+            lambda r: active_enrollment(r) is not None,
+        )
+        enrollment = active_enrollment(res)
+        if not enrollment:
+            print_step_failure(
+                step,
+                title,
+                res.status_code,
+                f"No ACTIVE enrollment for course {course_id} after {EVENT_WAIT_SECONDS}s: {res.text}",
             )
-            if res.status_code == 200:
-                enrollment_resp_data = res.json()
-                if enrollment_resp_data.get("status") == "ACTIVE":
-                    enrollment_verified = True
-                    break
-
-        if not enrollment_verified:
-            err_msg = res.text if res is not None else "Timeout waiting for enrollment activation"
-            status_c = res.status_code if res is not None else 408
-            print_step_failure(step, title, status_c, f"Enrollment status not ACTIVE: {err_msg}")
             return False
-
         print_step_success(
             step,
-            f"Enrollment verified ACTIVE: ID={enrollment_resp_data.get('enrollment_id')}, "
-            f"Expires={enrollment_resp_data.get('expires_at')}",
+            f"Enrollment verified ACTIVE: ID={enrollment.get('enrollment_id')}, "
+            f"Expires={enrollment.get('expires_at')}",
         )
 
         # -------------------------------------------------------------------
         # Step 8: GET /api/content/lessons/{id}/stream → 200, embed_url returned
         # -------------------------------------------------------------------
+        lesson_id = assessment.get("lesson_id") or assessment.get("module_id") or 1
         step = 8
         title = f"GET /api/content/lessons/{lesson_id}/stream (Stream authorized lesson content)"
         print_step_header(step, title)
-        res = client.get(
-            f"{BASE_URL}/api/content/lessons/{lesson_id}/stream",
-            params={"course_id": course_id, "youtube_video_id": "dQw4w9WgXcQ"},
-            headers=auth_headers,
+        res = retry_until(
+            lambda: client.get(
+                f"{BASE_URL}/api/content/lessons/{lesson_id}/stream",
+                params={"course_id": course_id, "youtube_video_id": SMOKE_YOUTUBE_VIDEO_ID},
+                headers=auth_headers,
+            ),
+            lambda r: r.status_code != 403,  # access reaches content_service by event
         )
         if res.status_code != 200:
             print_step_failure(step, title, res.status_code, res.text)
             return False
 
-        stream_data = res.json()
-        embed_url = stream_data.get("embed_url")
+        embed_url = res.json().get("embed_url")
         if not embed_url:
             print_step_failure(step, title, res.status_code, "Response missing 'embed_url'")
             return False
@@ -397,9 +454,9 @@ def run_critical_path() -> bool:
         step = 9
         title = f"POST /api/assessments/{assessment_id}/start (Start assessment session)"
         print_step_header(step, title)
-        res = client.post(
-            f"{BASE_URL}/api/assessments/{assessment_id}/start",
-            headers=auth_headers,
+        res = retry_until(
+            lambda: client.post(f"{BASE_URL}/api/assessments/{assessment_id}/start", headers=auth_headers),
+            lambda r: r.status_code != 403,  # access reaches assessment_service by event
         )
         if res.status_code != 200:
             print_step_failure(step, title, res.status_code, res.text)
@@ -451,6 +508,7 @@ def run_critical_path() -> bool:
     except Exception as exc:
         print(f"\n{RED}{BOLD}❌ Unexpected Exception occurred during critical path run:{RESET} {exc}")
         import traceback
+
         traceback.print_exc()
         return False
 
