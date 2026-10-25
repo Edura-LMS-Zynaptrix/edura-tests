@@ -6,26 +6,12 @@ from typing import Dict
 
 import httpx
 
-from .conftest import admin_headers, role_headers
+from .conftest import admin_headers
 
 
-class TestNotificationService:
-    def test_given_notification_manager_when_get_notification_then_welcome(
-        self, client: httpx.Client
-    ):
-        res = client.get(
-            "/api/notifications/notification",
-            headers=role_headers("notification_manager"),
-        )
-        assert res.status_code == 200, res.text
-        assert res.json() == {"message": "Welcome Notification Manager"}
-
-    def test_given_admin_when_get_notification_then_403(self, client: httpx.Client):
-        res = client.get("/api/notifications/notification", headers=admin_headers())
-        assert res.status_code == 403
-
-    def test_given_no_token_when_get_notification_then_401(self, client: httpx.Client):
-        assert client.get("/api/notifications/notification").status_code == 401
+# notification_service runs only its RabbitMQ consumer (its Dockerfile starts consumer.py,
+# not uvicorn), so the gateway has nothing to route /api/notifications/ to. Its behaviour
+# is verified through the events it consumes, not over HTTP.
 
 
 class TestPlatformStats:

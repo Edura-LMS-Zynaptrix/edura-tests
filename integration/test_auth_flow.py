@@ -21,6 +21,19 @@ def _fresh_session(client: httpx.Client) -> httpx.Client:
     return httpx.Client(base_url=str(client.base_url), timeout=30.0)
 
 
+def _login_refresh_token(client: httpx.Client, student: Dict[str, Any]) -> str:
+    """Logs in and returns the refresh token from the Set-Cookie header."""
+    with _fresh_session(client) as session:
+        login = session.post(
+            "/api/auth/login",
+            json={"email": student["email"], "password": student["password"]},
+        )
+    assert login.status_code == 200, login.text
+    token = login.cookies.get("refresh_token")
+    assert token, "login should set the refresh_token cookie"
+    return token
+
+
 class TestRegister:
     def test_given_new_email_when_register_then_returns_unverified_student(
         self, client: httpx.Client, created_users: List[int]
@@ -155,15 +168,11 @@ class TestRefreshAndLogout:
     def test_given_valid_refresh_token_when_refresh_then_new_access_token(
         self, client: httpx.Client, student: Dict[str, Any]
     ):
-        # Arrange: login stores the refresh cookie in this session's cookie jar
+        # Arrange: the cookie is Secure, so over plain http it must be sent by hand
+        token = _login_refresh_token(client, student)
+        # Act
         with _fresh_session(client) as session:
-            login = session.post(
-                "/api/auth/login",
-                json={"email": student["email"], "password": student["password"]},
-            )
-            assert login.status_code == 200, login.text
-            # Act
-            res = session.post("/api/auth/refresh", json={})
+            res = session.post("/api/auth/refresh", json={"refresh_token": token})
         # Assert
         assert res.status_code == 200, res.text
         assert res.json()["access_token"]
@@ -180,16 +189,12 @@ class TestRefreshAndLogout:
         self, client: httpx.Client, student: Dict[str, Any]
     ):
         # Arrange
+        token = _login_refresh_token(client, student)
+        # Act
         with _fresh_session(client) as session:
-            login = session.post(
-                "/api/auth/login",
-                json={"email": student["email"], "password": student["password"]},
+            out = session.post(
+                "/api/auth/logout", headers={"Cookie": f"refresh_token={token}"}
             )
-            assert login.status_code == 200, login.text
-            token = session.cookies.get("refresh_token")
-            assert token, "login should set the refresh_token cookie"
-            # Act
-            out = session.post("/api/auth/logout")
         # Assert: the revoked token no longer refreshes
         assert out.status_code == 200
         with _fresh_session(client) as other:

@@ -550,7 +550,11 @@ class TestResultsAndRankings:
     ):
         self._take_exam(client, exam_with_question["id"], student_headers, "4")
 
-        res = client.get(f"{A}/my-attempts", headers=student_headers)
+        res = client.get(
+            f"{A}/my-attempts",
+            params={"course_id": exam_with_question["course_id"]},
+            headers=student_headers,
+        )
 
         assert res.status_code == 200
         mine = [a for a in res.json() if a["assessment_id"] == exam_with_question["id"]]
