@@ -47,5 +47,11 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Integration Tests
+        # No staging is reachable here, so the suite runs against its in-process
+        # mock transport. These are throwaway values, not real credentials.
+        env:
+          SECRET_KEY: ci-mock-jwt-key-not-a-real-secret
+          PAYHERE_MERCHANT_ID: ci_mock_merchant
+          PAYHERE_MERCHANT_SECRET: ci-mock-merchant-secret
         run: |
           pytest integration/test_payment_enrollment_flow.py -v
