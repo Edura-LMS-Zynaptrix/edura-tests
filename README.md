@@ -53,10 +53,12 @@ The smoke test runs automatically against staging after every staging deploy (se
    source .venv/bin/activate          # Windows: .venv\Scripts\activate
    pip install -r requirements.txt
    ```
-3. **Choose the system under test** by setting `STAGING_API_URL` (default `http://localhost`):
+3. **Configure the environment.** Copy `.env.example` to `.env`, fill in the required secrets and load it:
    ```bash
-   export STAGING_API_URL=https://staging.eduralms.com      # Windows PowerShell: $env:STAGING_API_URL = "https://staging.eduralms.com"
+   cp .env.example .env
+   set -a; source .env; set +a        # Windows PowerShell: set each variable with $env:NAME = "value"
    ```
+   Set `STAGING_API_URL` to choose the system under test (default `http://localhost`), for example `https://staging.eduralms.com`.
 
 ## Running the tests
 
@@ -72,18 +74,19 @@ python smoke/critical_path.py
 
 ### Environment variables
 
-The tests have defaults that match the local development setup. When testing a deployed environment, set the same values that environment uses:
+`SECRET_KEY` and `PAYHERE_MERCHANT_SECRET` are required and have no defaults; the tests stop with a clear message if they are missing. Set them to the values the system under test uses. The other variables have defaults that match the local development setup:
 
 | Variable | Used for | Default |
 |---|---|---|
 | `STAGING_API_URL` | Gateway URL under test | `http://localhost` |
-| `SECRET_KEY` | JWT signing key of the target system | development key |
-| `PAYHERE_MERCHANT_ID` / `PAYHERE_MERCHANT_SECRET` | Signing the simulated PayHere webhook | sandbox values |
+| `SECRET_KEY` | JWT signing key of the target system | **required** |
+| `PAYHERE_MERCHANT_SECRET` | Signing the simulated PayHere webhook | **required** |
+| `PAYHERE_MERCHANT_ID` | Merchant ID used in the simulated webhook | sandbox value |
 | `SMOKE_TEST_OTP` | OTP accepted by integration tests | `123456` |
 | `SMOKE_EMAIL_DOMAIN` / `SMOKE_EMAIL_USER` | Address used for smoke-test sign-ups | `resend.dev` / `delivered` |
 | `SMOKE_EVENT_WAIT_SECONDS` | How long to wait for asynchronous events | `30` |
 
-Do not commit real secrets. The smoke job in `edura-infra` reads them from the GitHub environment secrets.
+Do not commit real secrets. The smoke job in `edura-infra` reads them from the GitHub environment secrets, and this repository's own **Tests CI** sets throwaway mock values because it runs against the in-process mock transport.
 
 ## Continuous integration
 

@@ -27,11 +27,22 @@ import pytest
 # ---------------------------------------------------------------------------
 # Configuration & Environment Variables
 # ---------------------------------------------------------------------------
+def _require_env(name: str) -> str:
+    """Return a required environment variable or fail with a clear message."""
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(
+            f"{name} is not set. Copy .env.example to .env and fill it in "
+            "(CI supplies it from GitHub Secrets)."
+        )
+    return value
+
+
 BASE_URL = os.getenv("STAGING_API_URL", "http://localhost").rstrip("/")
 PAYHERE_MERCHANT_ID = os.getenv("PAYHERE_MERCHANT_ID", "sandbox_merchant_12345")
-PAYHERE_MERCHANT_SECRET = os.getenv("PAYHERE_MERCHANT_SECRET", "sandbox_secret_abcdef")
+PAYHERE_MERCHANT_SECRET = _require_env("PAYHERE_MERCHANT_SECRET")
 SMOKE_TEST_OTP = os.getenv("SMOKE_TEST_OTP", "123456")
-JWT_SECRET_KEY = os.getenv("SECRET_KEY", "edura_super_secret_jwt_key_2026_dev")
+JWT_SECRET_KEY = _require_env("SECRET_KEY")
 JWT_ALGORITHM = "HS256"
 REQUEST_TIMEOUT = 30.0
 

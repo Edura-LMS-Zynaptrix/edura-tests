@@ -25,10 +25,21 @@ import jwt
 # ---------------------------------------------------------------------------
 # Configuration & Environment Variables
 # ---------------------------------------------------------------------------
+def _require_env(name: str) -> str:
+    """Return a required environment variable or fail with a clear message."""
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(
+            f"{name} is not set. Copy .env.example to .env and fill it in "
+            "(CI supplies it from GitHub Secrets)."
+        )
+    return value
+
+
 BASE_URL = os.getenv("STAGING_API_URL", "http://localhost").rstrip("/")
 PAYHERE_MERCHANT_ID = os.getenv("PAYHERE_MERCHANT_ID", "sandbox_merchant_12345")
-PAYHERE_MERCHANT_SECRET = os.getenv("PAYHERE_MERCHANT_SECRET", "sandbox_secret_abcdef")
-JWT_SECRET_KEY = os.getenv("SECRET_KEY", "edura_super_secret_jwt_key_2026_dev")
+PAYHERE_MERCHANT_SECRET = _require_env("PAYHERE_MERCHANT_SECRET")
+JWT_SECRET_KEY = _require_env("SECRET_KEY")
 JWT_ALGORITHM = "HS256"
 # Resend's test inbox: accepts any "+label", delivers nothing and never bounces,
 # so the verification email auth_service sends on sign-up doesn't hurt the sender domain.
