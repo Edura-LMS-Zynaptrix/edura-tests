@@ -22,6 +22,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 import httpx
 import jwt
 
+
 # ---------------------------------------------------------------------------
 # Configuration & Environment Variables
 # ---------------------------------------------------------------------------
@@ -134,7 +135,9 @@ def started(assessment: Dict[str, Any]) -> bool:
     if not start:
         return True
     try:
-        return datetime.fromisoformat(start.replace("Z", "+00:00")) <= datetime.now(timezone.utc)
+        return datetime.fromisoformat(start.replace("Z", "+00:00")) <= datetime.now(
+            timezone.utc
+        )
     except ValueError:
         return False
 
@@ -147,7 +150,9 @@ def pick_course_and_assessment(
     checkout → webhook → enrollment path is exercised) with a published assessment
     that has already opened. Falls back to any published course with such an assessment.
     """
-    res = client.get(f"{BASE_URL}/api/courses/", params={"page_size": 100}, headers=headers)
+    res = client.get(
+        f"{BASE_URL}/api/courses/", params={"page_size": 100}, headers=headers
+    )
     if res.status_code != 200:
         return None, None, f"GET /api/courses/ returned {res.status_code}: {res.text}"
     data = res.json()
@@ -164,16 +169,22 @@ def pick_course_and_assessment(
     # Paid courses first, then the rest; checked in order until one has a usable exam.
     for course in sorted(courses, key=lambda c: price(c) <= 0):
         res = client.get(
-            f"{BASE_URL}/api/assessments/", params={"course_id": course["id"]}, headers=headers
+            f"{BASE_URL}/api/assessments/",
+            params={"course_id": course["id"]},
+            headers=headers,
         )
         if res.status_code != 200:
             continue
         usable = [a for a in res.json() if a.get("is_published", True) and started(a)]
         if usable:
             return course, usable[0], ""
-    return None, None, (
-        f"None of the {len(courses)} published courses has a published assessment that "
-        "has already started; publish one on this environment"
+    return (
+        None,
+        None,
+        (
+            f"None of the {len(courses)} published courses has a published assessment that "
+            "has already started; publish one on this environment"
+        ),
     )
 
 
@@ -196,7 +207,11 @@ def run_cleanup(
     def call(label: str, method: str, path: str, **kwargs):
         try:
             resp = client.request(
-                method, f"{BASE_URL}{path}", headers=admin_headers, timeout=REQUEST_TIMEOUT, **kwargs
+                method,
+                f"{BASE_URL}{path}",
+                headers=admin_headers,
+                timeout=REQUEST_TIMEOUT,
+                **kwargs,
             )
             print(f"  {label}: HTTP {resp.status_code}")
         except Exception as e:
@@ -213,12 +228,22 @@ def run_cleanup(
 
     # 2. Payment: payment_service has no delete endpoint; the record stays as an audit trail.
     if order_id:
-        print(f"  Payment {order_id}: kept (payment_service exposes no delete endpoint)")
+        print(
+            f"  Payment {order_id}: kept (payment_service exposes no delete endpoint)"
+        )
 
     # 3. Profile in user_service, then the login in auth_service.
     if student_id:
-        call(f"Delete user profile (student_id={student_id})", "DELETE", f"/api/users/{student_id}")
-        call(f"Delete auth user (student_id={student_id})", "DELETE", f"/api/auth/users/{student_id}")
+        call(
+            f"Delete user profile (student_id={student_id})",
+            "DELETE",
+            f"/api/users/{student_id}",
+        )
+        call(
+            f"Delete auth user (student_id={student_id})",
+            "DELETE",
+            f"/api/auth/users/{student_id}",
+        )
 
     print(f"{YELLOW}--- Cleanup Complete ---{RESET}\n")
 
@@ -227,10 +252,14 @@ def run_cleanup(
 # Main Critical Path Execution (AC1 & AC3)
 # ---------------------------------------------------------------------------
 def run_critical_path() -> bool:
-    print(f"\n{BOLD}═══════════════════════════════════════════════════════════════════{RESET}")
+    print(
+        f"\n{BOLD}═══════════════════════════════════════════════════════════════════{RESET}"
+    )
     print(f"{BOLD}   EDURA E2E Smoke Test — Critical Path (DDP-#24){RESET}")
     print(f"   Target URL: {CYAN}{BASE_URL}{RESET}")
-    print(f"{BOLD}═══════════════════════════════════════════════════════════════════{RESET}")
+    print(
+        f"{BOLD}═══════════════════════════════════════════════════════════════════{RESET}"
+    )
 
     unique_suffix = f"{int(time.time())}{uuid.uuid4().hex[:6]}"
     test_email = f"{SMOKE_EMAIL_USER}+smoke{unique_suffix}@{SMOKE_EMAIL_DOMAIN}"
@@ -264,9 +293,13 @@ def run_critical_path() -> bool:
         reg_data = res.json()
         student_id = reg_data.get("id")
         if not student_id:
-            print_step_failure(step, title, res.status_code, "Response missing 'id' field")
+            print_step_failure(
+                step, title, res.status_code, "Response missing 'id' field"
+            )
             return False
-        print_step_success(step, f"Registered student ID={student_id}, email={test_email}")
+        print_step_success(
+            step, f"Registered student ID={student_id}, email={test_email}"
+        )
 
         # -------------------------------------------------------------------
         # Step 2: POST /api/auth/verify-email → 200 (the emailed verification link)
@@ -299,10 +332,14 @@ def run_critical_path() -> bool:
         login_data = res.json()
         access_token = login_data.get("access_token")
         if not access_token:
-            print_step_failure(step, title, res.status_code, "Response missing 'access_token'")
+            print_step_failure(
+                step, title, res.status_code, "Response missing 'access_token'"
+            )
             return False
         auth_headers = {"Authorization": f"Bearer {access_token}"}
-        print_step_success(step, f"Access token received ({login_data.get('token_type', 'Bearer')})")
+        print_step_success(
+            step, f"Access token received ({login_data.get('token_type', 'Bearer')})"
+        )
 
         # -------------------------------------------------------------------
         # Step 4: GET /api/courses → 200, a PUBLISHED course with an open assessment
@@ -356,9 +393,13 @@ def run_critical_path() -> bool:
         checkout_currency = checkout_data.get("currency", "LKR")
 
         if not order_id or not redirect_url:
-            print_step_failure(step, title, res.status_code, "Missing 'order_id' or 'redirect_url'")
+            print_step_failure(
+                step, title, res.status_code, "Missing 'order_id' or 'redirect_url'"
+            )
             return False
-        print_step_success(step, f"Checkout initialized. Order={order_id}, Redirect={redirect_url}")
+        print_step_success(
+            step, f"Checkout initialized. Order={order_id}, Redirect={redirect_url}"
+        )
 
         # -------------------------------------------------------------------
         # Step 6: POST /api/payments/webhook with valid HMAC → 200
@@ -368,7 +409,9 @@ def run_critical_path() -> bool:
         print_step_header(step, title)
         formatted_amount = f"{checkout_amount:.2f}"
         status_code_str = "2"  # PayHere Success status code
-        actual_merchant_id = str(checkout_data.get("merchant_id") or PAYHERE_MERCHANT_ID)
+        actual_merchant_id = str(
+            checkout_data.get("merchant_id") or PAYHERE_MERCHANT_ID
+        )
 
         md5sig = calculate_payhere_signature(
             merchant_id=actual_merchant_id,
@@ -396,7 +439,9 @@ def run_critical_path() -> bool:
         if res.status_code != 200 or res.json().get("status") != "SUCCESS":
             print_step_failure(step, title, res.status_code, res.text)
             return False
-        print_step_success(step, f"Webhook accepted with valid HMAC MD5 signature: {res.json()}")
+        print_step_success(
+            step, f"Webhook accepted with valid HMAC MD5 signature: {res.json()}"
+        )
 
         # -------------------------------------------------------------------
         # Step 7: GET /api/enrollments/me → 200, enrollment ACTIVE
@@ -409,13 +454,19 @@ def run_critical_path() -> bool:
             if r.status_code != 200:
                 return None
             for e in r.json():
-                if e.get("course_id") == course_id and e.get("status") == "ACTIVE" and not e.get("module_id"):
+                if (
+                    e.get("course_id") == course_id
+                    and e.get("status") == "ACTIVE"
+                    and not e.get("module_id")
+                ):
                     return e
             return None
 
         res = retry_until(
             lambda: client.get(
-                f"{BASE_URL}/api/enrollments/me", params={"course_id": course_id}, headers=auth_headers
+                f"{BASE_URL}/api/enrollments/me",
+                params={"course_id": course_id},
+                headers=auth_headers,
             ),
             lambda r: active_enrollment(r) is not None,
         )
@@ -444,7 +495,10 @@ def run_critical_path() -> bool:
         res = retry_until(
             lambda: client.get(
                 f"{BASE_URL}/api/content/lessons/{lesson_id}/stream",
-                params={"course_id": course_id, "youtube_video_id": SMOKE_YOUTUBE_VIDEO_ID},
+                params={
+                    "course_id": course_id,
+                    "youtube_video_id": SMOKE_YOUTUBE_VIDEO_ID,
+                },
                 headers=auth_headers,
             ),
             lambda r: r.status_code != 403,  # access reaches content_service by event
@@ -455,7 +509,9 @@ def run_critical_path() -> bool:
 
         embed_url = res.json().get("embed_url")
         if not embed_url:
-            print_step_failure(step, title, res.status_code, "Response missing 'embed_url'")
+            print_step_failure(
+                step, title, res.status_code, "Response missing 'embed_url'"
+            )
             return False
         print_step_success(step, f"Stream embed_url returned: {embed_url}")
 
@@ -463,11 +519,17 @@ def run_critical_path() -> bool:
         # Step 9: POST /api/assessments/{id}/start → 200, session created
         # -------------------------------------------------------------------
         step = 9
-        title = f"POST /api/assessments/{assessment_id}/start (Start assessment session)"
+        title = (
+            f"POST /api/assessments/{assessment_id}/start (Start assessment session)"
+        )
         print_step_header(step, title)
         res = retry_until(
-            lambda: client.post(f"{BASE_URL}/api/assessments/{assessment_id}/start", headers=auth_headers),
-            lambda r: r.status_code != 403,  # access reaches assessment_service by event
+            lambda: client.post(
+                f"{BASE_URL}/api/assessments/{assessment_id}/start",
+                headers=auth_headers,
+            ),
+            lambda r: r.status_code
+            != 403,  # access reaches assessment_service by event
         )
         if res.status_code != 200:
             print_step_failure(step, title, res.status_code, res.text)
@@ -476,7 +538,9 @@ def run_critical_path() -> bool:
         session_data = res.json()
         session_id = session_data.get("session_id")
         if not session_id:
-            print_step_failure(step, title, res.status_code, "Response missing 'session_id'")
+            print_step_failure(
+                step, title, res.status_code, "Response missing 'session_id'"
+            )
             return False
         print_step_success(
             step,
@@ -488,7 +552,9 @@ def run_critical_path() -> bool:
         # Step 10: GET /api/progress/courses/{id} → 200, completion_percentage returned
         # -------------------------------------------------------------------
         step = 10
-        title = f"GET /api/progress/courses/{course_id} (Verify learner progress dashboard)"
+        title = (
+            f"GET /api/progress/courses/{course_id} (Verify learner progress dashboard)"
+        )
         print_step_header(step, title)
         res = client.get(
             f"{BASE_URL}/api/progress/courses/{course_id}",
@@ -500,7 +566,9 @@ def run_critical_path() -> bool:
 
         progress_data = res.json()
         if "completion_percentage" not in progress_data:
-            print_step_failure(step, title, res.status_code, "Response missing 'completion_percentage'")
+            print_step_failure(
+                step, title, res.status_code, "Response missing 'completion_percentage'"
+            )
             return False
         print_step_success(
             step,
@@ -511,13 +579,21 @@ def run_critical_path() -> bool:
         # -------------------------------------------------------------------
         # All Steps Completed Successfully
         # -------------------------------------------------------------------
-        print(f"\n{GREEN}{BOLD}═══════════════════════════════════════════════════════════════════{RESET}")
-        print(f"{GREEN}{BOLD}   🎉 ALL 10 CRITICAL PATH STEPS PASSED SUCCESSFULLY! (AC1){RESET}")
-        print(f"{GREEN}{BOLD}═══════════════════════════════════════════════════════════════════{RESET}\n")
+        print(
+            f"\n{GREEN}{BOLD}═══════════════════════════════════════════════════════════════════{RESET}"
+        )
+        print(
+            f"{GREEN}{BOLD}   🎉 ALL 10 CRITICAL PATH STEPS PASSED SUCCESSFULLY! (AC1){RESET}"
+        )
+        print(
+            f"{GREEN}{BOLD}═══════════════════════════════════════════════════════════════════{RESET}\n"
+        )
         return True
 
     except Exception as exc:
-        print(f"\n{RED}{BOLD}❌ Unexpected Exception occurred during critical path run:{RESET} {exc}")
+        print(
+            f"\n{RED}{BOLD}❌ Unexpected Exception occurred during critical path run:{RESET} {exc}"
+        )
         import traceback
 
         traceback.print_exc()

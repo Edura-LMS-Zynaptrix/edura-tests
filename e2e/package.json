@@ -1,0 +1,15 @@
+{
+  "name": "edura-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Browser (UI) end-to-end tests for the three critical EDURA flows",
+  "scripts": {
+    "test": "playwright test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.49.1",
+    "@types/node": "22.10.2",
+    "typescript": "5.7.2"
+  }
+}

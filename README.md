@@ -30,7 +30,7 @@ The smoke test runs automatically against staging after every staging deploy (se
 | Folder | Purpose |
 |---|---|
 | `smoke/critical_path.py` | End-to-end smoke test of the student journey (register, verify, log in, enrol, view a course) |
-| `integration/` | Pytest integration tests, for example the PayHere payment to enrollment flow |
+| `integration/` | Pytest integration tests: the PayHere payment to enrollment flow (mock gateway) and the live `*_flow` tests against a deployed environment |
 | `performance/` | Load tests (Locust) and the scripts that run and analyse them |
 
 ## Prerequisites
@@ -66,6 +66,12 @@ Run all integration tests:
 ```bash
 pytest integration -v
 ```
+
+The `integration/test_*_flow.py` files (admin, assessment, auth, content, course, notification and analytics, progress, user) are **live tests**: they call a real gateway at `STAGING_API_URL` and need `SECRET_KEY` of that system. They skip themselves, never fail, if `SECRET_KEY` is not set or the gateway is unreachable. Each test creates its own accounts and courses and removes them afterwards.
+
+- Requests are spaced 0.65 seconds apart (`INTEGRATION_REQUEST_INTERVAL`) to stay under the gateway's limit of 100 requests per minute, so the full set takes about 10 minutes.
+- Tokens are issued 60 seconds in the past, so a clock that runs slightly ahead of the server's does not cause "invalid token" errors.
+- They do not create payments. The payment and enrolment flows leave permanent test payments (the payment service has no delete endpoint), so run those only against a throwaway environment.
 
 Run the end-to-end smoke test:
 ```bash
