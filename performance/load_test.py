@@ -42,6 +42,10 @@ LATENCY_REQUESTS = int(os.getenv("PERF_LATENCY_REQUESTS", "20"))  # per endpoint
 LATENCY_INTERVAL = float(os.getenv("PERF_LATENCY_INTERVAL", "0.8"))  # seconds between requests
 STEPS = [int(s) for s in os.getenv("PERF_STEPS", "1,10,25,50,100").split(",")]
 STEP_SECONDS = float(os.getenv("PERF_STEP_SECONDS", "20"))
+# Stop stepping up once a step looks unhealthy, so the test cannot knock a small server over.
+ABORT_ERROR_PCT = float(os.getenv("PERF_ABORT_ERROR_PCT", "10"))
+ABORT_P95_SECONDS = float(os.getenv("PERF_ABORT_P95_SECONDS", "5"))
+REQUEST_TIMEOUT = float(os.getenv("PERF_REQUEST_TIMEOUT", "10"))
 RESULTS = Path(__file__).parent / "results"
 FAILURES = {}  # transport failures by exception name (status 0 in the tables)
 
@@ -62,6 +66,7 @@ def summarise(durations, statuses):
         "ok": ok,
         "errors": total - ok,
         "rate_limited": sum(1 for s in statuses if s == 429),
+        "status_counts": {str(c): statuses.count(c) for c in sorted(set(statuses))},
         "error_rate_pct": round(100 * (total - ok) / total, 1) if total else 0.0,
         "p50_ms": round(1000 * percentile(durations, 50)),
         "p95_ms": round(1000 * percentile(durations, 95)),
@@ -114,15 +119,20 @@ async def run_load():
     for users in STEPS:
         durations, statuses = [], []
         limits = httpx.Limits(max_connections=users, max_keepalive_connections=users)
-        async with httpx.AsyncClient(timeout=30, limits=limits, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, limits=limits, follow_redirects=True) as client:
             started = time.perf_counter()
             deadline = started + STEP_SECONDS
             await asyncio.gather(*(worker(client, deadline, durations, statuses, n) for n in range(users)))
             elapsed = time.perf_counter() - started
         row = summarise(durations, statuses)
+        print(f"  {users} users: statuses {row['status_counts']}", flush=True)
         row["throughput_rps"] = round(row["requests"] / elapsed, 1)
         rows[str(users)] = row
-        await asyncio.sleep(5)  # let the service settle between steps
+        if row["error_rate_pct"] > ABORT_ERROR_PCT or row["p95_ms"] > 1000 * ABORT_P95_SECONDS:
+            row["stopped_here"] = True
+            print(f"stopping after {users} users: error rate {row['error_rate_pct']}%, p95 {row['p95_ms']} ms")
+            break
+        await asyncio.sleep(8)  # let the service settle between steps
     return rows
 
 
