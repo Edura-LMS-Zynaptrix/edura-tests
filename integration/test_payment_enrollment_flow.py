@@ -24,6 +24,7 @@ import httpx
 import jwt
 import pytest
 
+
 # ---------------------------------------------------------------------------
 # Configuration & Environment Variables
 # ---------------------------------------------------------------------------
@@ -150,15 +151,24 @@ class MockStagingTransport(httpx.BaseTransport):
         if url_path == "/api/auth/login" and method == "POST":
             data = json.loads(request.read())
             email = data.get("email")
-            matched = next((u for u in self.users.values() if u["email"] == email), None)
+            matched = next(
+                (u for u in self.users.values() if u["email"] == email), None
+            )
             uid = matched["id"] if matched else 999
             role = matched["role"] if matched else "student"
             token = jwt.encode(
-                {"sub": str(uid), "email": email, "role": role, "exp": int(time.time()) + 3600},
+                {
+                    "sub": str(uid),
+                    "email": email,
+                    "role": role,
+                    "exp": int(time.time()) + 3600,
+                },
                 JWT_SECRET_KEY,
                 algorithm=JWT_ALGORITHM,
             )
-            return httpx.Response(200, json={"access_token": token, "token_type": "Bearer"})
+            return httpx.Response(
+                200, json={"access_token": token, "token_type": "Bearer"}
+            )
 
         # Courses list & create
         if url_path in ("/api/courses/", "/api/courses") and method == "POST":
@@ -175,7 +185,10 @@ class MockStagingTransport(httpx.BaseTransport):
             return httpx.Response(201, json=self.courses[cid])
 
         if url_path in ("/api/courses/", "/api/courses") and method == "GET":
-            return httpx.Response(200, json={"items": list(self.courses.values()), "total": len(self.courses)})
+            return httpx.Response(
+                200,
+                json={"items": list(self.courses.values()), "total": len(self.courses)},
+            )
 
         # Course delete
         if url_path.startswith("/api/courses/") and method == "DELETE":
@@ -190,7 +203,12 @@ class MockStagingTransport(httpx.BaseTransport):
             student_id = 1
             if auth.startswith("Bearer "):
                 try:
-                    payload = jwt.decode(auth[7:], JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM], options={"verify_aud": False})
+                    payload = jwt.decode(
+                        auth[7:],
+                        JWT_SECRET_KEY,
+                        algorithms=[JWT_ALGORITHM],
+                        options={"verify_aud": False},
+                    )
                     student_id = int(payload.get("sub", 1))
                 except Exception:
                     pass
@@ -231,7 +249,12 @@ class MockStagingTransport(httpx.BaseTransport):
 
             # Calculate expected HMAC
             expected_sig = calculate_payhere_signature(
-                merchant_id, order_id, payhere_amount, payhere_currency, status_code, PAYHERE_MERCHANT_SECRET
+                merchant_id,
+                order_id,
+                payhere_amount,
+                payhere_currency,
+                status_code,
+                PAYHERE_MERCHANT_SECRET,
             )
             if received_sig.upper() != expected_sig.upper():
                 return httpx.Response(
@@ -244,15 +267,26 @@ class MockStagingTransport(httpx.BaseTransport):
 
             payment = self.payments.get(order_id)
             if not payment:
-                return httpx.Response(404, json={"error": "PAYMENT_NOT_FOUND", "message": f"No payment for {order_id}"})
+                return httpx.Response(
+                    404,
+                    json={
+                        "error": "PAYMENT_NOT_FOUND",
+                        "message": f"No payment for {order_id}",
+                    },
+                )
 
             # Idempotency check: if already SUCCESS, return 200 without duplicate action
             if payment["payment_status"] == "SUCCESS":
-                return httpx.Response(200, json={"status": "SUCCESS", "message": "Webhook already processed"})
+                return httpx.Response(
+                    200,
+                    json={"status": "SUCCESS", "message": "Webhook already processed"},
+                )
 
             if status_code == "2":
                 payment["payment_status"] = "SUCCESS"
-                payment["reference_no"] = form.get("payment_id", f"PAY-{uuid.uuid4().hex[:8].upper()}")
+                payment["reference_no"] = form.get(
+                    "payment_id", f"PAY-{uuid.uuid4().hex[:8].upper()}"
+                )
                 # Activate enrollment downstream
                 sid = payment["student_id"]
                 cid = payment["course_id"]
@@ -263,12 +297,26 @@ class MockStagingTransport(httpx.BaseTransport):
                     "course_id": cid,
                     "status": "ACTIVE",
                     "enrolled_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    "expires_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 30 * 86400)),
+                    "expires_at": time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 30 * 86400)
+                    ),
                 }
-                return httpx.Response(200, json={"status": "SUCCESS", "message": "Payment confirmed and event published"})
+                return httpx.Response(
+                    200,
+                    json={
+                        "status": "SUCCESS",
+                        "message": "Payment confirmed and event published",
+                    },
+                )
             else:
                 payment["payment_status"] = "FAILED"
-                return httpx.Response(200, json={"status": "FAILED", "message": f"Payment failed with code {status_code}"})
+                return httpx.Response(
+                    200,
+                    json={
+                        "status": "FAILED",
+                        "message": f"Payment failed with code {status_code}",
+                    },
+                )
 
         # List payments
         if url_path in ("/api/payments/", "/api/payments") and method == "GET":
@@ -277,7 +325,12 @@ class MockStagingTransport(httpx.BaseTransport):
             role = ""
             if auth.startswith("Bearer "):
                 try:
-                    payload = jwt.decode(auth[7:], JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM], options={"verify_aud": False})
+                    payload = jwt.decode(
+                        auth[7:],
+                        JWT_SECRET_KEY,
+                        algorithms=[JWT_ALGORITHM],
+                        options={"verify_aud": False},
+                    )
                     sid = int(payload.get("sub", 0))
                     role = payload.get("role", "")
                 except Exception:
@@ -293,11 +346,17 @@ class MockStagingTransport(httpx.BaseTransport):
             sid = int(params.get("student_id", 0))
             cid = int(params.get("course_id", 0)) if params.get("course_id") else None
             matched = [
-                e for e in self.enrollments.values()
+                e
+                for e in self.enrollments.values()
                 if e["student_id"] == sid and (cid is None or e["course_id"] == cid)
             ]
             if not matched:
-                return httpx.Response(404, json={"detail": "Enrollment record not found for student and course"})
+                return httpx.Response(
+                    404,
+                    json={
+                        "detail": "Enrollment record not found for student and course"
+                    },
+                )
             return httpx.Response(200, json=matched[-1])
 
         # Content signed-url
@@ -310,7 +369,12 @@ class MockStagingTransport(httpx.BaseTransport):
             role = ""
             if auth.startswith("Bearer "):
                 try:
-                    payload = jwt.decode(auth[7:], JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM], options={"verify_aud": False})
+                    payload = jwt.decode(
+                        auth[7:],
+                        JWT_SECRET_KEY,
+                        algorithms=[JWT_ALGORITHM],
+                        options={"verify_aud": False},
+                    )
                     sid = int(payload.get("sub", 0))
                     role = payload.get("role", "")
                 except Exception:
@@ -338,22 +402,30 @@ class MockStagingTransport(httpx.BaseTransport):
         if url_path in ("/api/enrollments/", "/api/enrollments") and method == "DELETE":
             params = dict(urllib.parse.parse_qsl(request.url.query.decode("utf-8")))
             sid = int(params.get("student_id", 0))
-            keys_to_del = [k for k, v in self.enrollments.items() if v["student_id"] == sid]
+            keys_to_del = [
+                k for k, v in self.enrollments.items() if v["student_id"] == sid
+            ]
             for k in keys_to_del:
                 del self.enrollments[k]
-            return httpx.Response(200, json={"message": f"Deleted {len(keys_to_del)} enrollment records"})
+            return httpx.Response(
+                200, json={"message": f"Deleted {len(keys_to_del)} enrollment records"}
+            )
 
         if url_path in ("/api/payments/", "/api/payments") and method == "DELETE":
             params = dict(urllib.parse.parse_qsl(request.url.query.decode("utf-8")))
             sid = int(params.get("student_id", 0)) if params.get("student_id") else None
             oid = params.get("order_id")
             keys_to_del = [
-                k for k, v in self.payments.items()
-                if (sid and v["student_id"] == sid) or (oid and v["payhere_order_id"] == oid)
+                k
+                for k, v in self.payments.items()
+                if (sid and v["student_id"] == sid)
+                or (oid and v["payhere_order_id"] == oid)
             ]
             for k in keys_to_del:
                 del self.payments[k]
-            return httpx.Response(200, json={"message": f"Deleted {len(keys_to_del)} payments"})
+            return httpx.Response(
+                200, json={"message": f"Deleted {len(keys_to_del)} payments"}
+            )
 
         if url_path.startswith("/api/users/") and method == "DELETE":
             return httpx.Response(200, json={"message": "User profile deleted"})
@@ -421,7 +493,9 @@ def seed_student(client: httpx.Client) -> Dict[str, Any]:
         f"{BASE_URL}/api/auth/register",
         json={"email": test_email, "password": test_password, "role": "student"},
     )
-    assert reg_res.status_code == 201, f"Failed to register test student: {reg_res.text}"
+    assert (
+        reg_res.status_code == 201
+    ), f"Failed to register test student: {reg_res.text}"
     student_id = reg_res.json()["id"]
 
     # 2. Verify OTP
@@ -436,7 +510,9 @@ def seed_student(client: httpx.Client) -> Dict[str, Any]:
         f"{BASE_URL}/api/auth/login",
         json={"email": test_email, "password": test_password},
     )
-    assert login_res.status_code == 200, f"Failed to login test student: {login_res.text}"
+    assert (
+        login_res.status_code == 200
+    ), f"Failed to login test student: {login_res.text}"
     access_token = login_res.json()["access_token"]
 
     return {
@@ -488,7 +564,11 @@ def run_cleanup(
         try:
             client.delete(
                 f"{BASE_URL}/api/enrollments/",
-                params={"student_id": student_id, "course_id": course_id} if course_id else {"student_id": student_id},
+                params=(
+                    {"student_id": student_id, "course_id": course_id}
+                    if course_id
+                    else {"student_id": student_id}
+                ),
                 headers=headers,
             )
         except Exception as e:
@@ -558,7 +638,9 @@ class TestPaymentEnrollmentFlow:
                 json={"course_id": course_id, "amount": 1500.00},
                 headers=student["headers"],
             )
-            assert checkout_res.status_code == 200, f"Checkout failed: {checkout_res.text}"
+            assert (
+                checkout_res.status_code == 200
+            ), f"Checkout failed: {checkout_res.text}"
             checkout_data = checkout_res.json()
             order_id = checkout_data["order_id"]
             amount_str = f"{float(checkout_data.get('amount', 1500.00)):.2f}"
@@ -590,7 +672,9 @@ class TestPaymentEnrollmentFlow:
                 f"{BASE_URL}/api/payments/webhook",
                 data=webhook_payload,
             )
-            assert webhook_res.status_code == 200, f"Webhook rejected: {webhook_res.text}"
+            assert (
+                webhook_res.status_code == 200
+            ), f"Webhook rejected: {webhook_res.text}"
             assert webhook_res.json().get("status") == "SUCCESS"
 
             # 4. Verify within 10 seconds: payment SUCCESS & enrollment ACTIVE
@@ -605,7 +689,10 @@ class TestPaymentEnrollmentFlow:
                 )
                 if p_res.status_code == 200:
                     payments = p_res.json()
-                    match = next((p for p in payments if p.get("payhere_order_id") == order_id), None)
+                    match = next(
+                        (p for p in payments if p.get("payhere_order_id") == order_id),
+                        None,
+                    )
                     if match and match.get("payment_status") == "SUCCESS":
                         payment_success = True
 
@@ -622,11 +709,17 @@ class TestPaymentEnrollmentFlow:
                     break
                 time.sleep(1)
 
-            assert payment_success is True, f"Payment status did not transition to SUCCESS for order {order_id}"
-            assert enrollment_active is True, f"Enrollment status was not ACTIVE for student {student['id']}, course {course_id}"
+            assert (
+                payment_success is True
+            ), f"Payment status did not transition to SUCCESS for order {order_id}"
+            assert (
+                enrollment_active is True
+            ), f"Enrollment status was not ACTIVE for student {student['id']}, course {course_id}"
 
         finally:
-            run_cleanup(self.client, self.admin_token, student["id"], order_id, course_id)
+            run_cleanup(
+                self.client, self.admin_token, student["id"], order_id, course_id
+            )
 
     def test_ac2_content_access_granted_after_enrollment(self):
         """
@@ -690,16 +783,24 @@ class TestPaymentEnrollmentFlow:
                 json={"public_id": "lessons/lesson_intro.pdf", "course_id": course_id},
                 headers=student["headers"],
             )
-            assert content_res.status_code == 200, f"Signed URL request failed: {content_res.text}"
+            assert (
+                content_res.status_code == 200
+            ), f"Signed URL request failed: {content_res.text}"
 
             content_data = content_res.json()
             assert "signed_url" in content_data, "Response missing signed_url"
-            assert content_data["signed_url"].startswith("http"), f"Invalid signed URL: {content_data['signed_url']}"
+            assert content_data["signed_url"].startswith(
+                "http"
+            ), f"Invalid signed URL: {content_data['signed_url']}"
             assert "expires_at" in content_data, "Response missing expires_at"
-            assert content_data["expires_at"] > int(time.time()), "Signed URL expires_at must be in the future"
+            assert content_data["expires_at"] > int(
+                time.time()
+            ), "Signed URL expires_at must be in the future"
 
         finally:
-            run_cleanup(self.client, self.admin_token, student["id"], order_id, course_id)
+            run_cleanup(
+                self.client, self.admin_token, student["id"], order_id, course_id
+            )
 
     def test_ac3_invalid_hmac_blocks_enrollment(self):
         """
@@ -741,7 +842,9 @@ class TestPaymentEnrollmentFlow:
                 data=webhook_payload,
             )
             # AC3 requirement: HTTP 400 returned
-            assert webhook_res.status_code == 400, f"Expected 400 Bad Request, got {webhook_res.status_code}: {webhook_res.text}"
+            assert (
+                webhook_res.status_code == 400
+            ), f"Expected 400 Bad Request, got {webhook_res.status_code}: {webhook_res.text}"
 
             # 3. Verify NO enrollment record is created (404 Not Found)
             enrollment_res = self.client.get(
@@ -749,12 +852,14 @@ class TestPaymentEnrollmentFlow:
                 params={"student_id": student["id"], "course_id": course_id},
                 headers=student["headers"],
             )
-            assert enrollment_res.status_code == 404, (
-                f"Expected 404 Not Found for enrollment, but got {enrollment_res.status_code}: {enrollment_res.text}"
-            )
+            assert (
+                enrollment_res.status_code == 404
+            ), f"Expected 404 Not Found for enrollment, but got {enrollment_res.status_code}: {enrollment_res.text}"
 
         finally:
-            run_cleanup(self.client, self.admin_token, student["id"], order_id, course_id)
+            run_cleanup(
+                self.client, self.admin_token, student["id"], order_id, course_id
+            )
 
     def test_ac4_duplicate_webhook_is_idempotent(self):
         """
@@ -799,7 +904,9 @@ class TestPaymentEnrollmentFlow:
             }
 
             # 2. Send webhook first time -> 200 OK
-            first_res = self.client.post(f"{BASE_URL}/api/payments/webhook", data=webhook_payload)
+            first_res = self.client.post(
+                f"{BASE_URL}/api/payments/webhook", data=webhook_payload
+            )
             assert first_res.status_code == 200
             assert first_res.json().get("status") == "SUCCESS"
 
@@ -807,8 +914,12 @@ class TestPaymentEnrollmentFlow:
             time.sleep(1)
 
             # 3. Send the exact SAME webhook a second time -> HTTP 200 returned
-            second_res = self.client.post(f"{BASE_URL}/api/payments/webhook", data=webhook_payload)
-            assert second_res.status_code == 200, f"Duplicate webhook failed with status {second_res.status_code}: {second_res.text}"
+            second_res = self.client.post(
+                f"{BASE_URL}/api/payments/webhook", data=webhook_payload
+            )
+            assert (
+                second_res.status_code == 200
+            ), f"Duplicate webhook failed with status {second_res.status_code}: {second_res.text}"
             assert second_res.json().get("status") == "SUCCESS"
 
             # 4. Verify payment status remains SUCCESS and is NOT duplicated
@@ -820,7 +931,9 @@ class TestPaymentEnrollmentFlow:
             matching_payments = [
                 p for p in payments_res.json() if p.get("payhere_order_id") == order_id
             ]
-            assert len(matching_payments) == 1, f"Expected exactly 1 payment record for order {order_id}, found {len(matching_payments)}"
+            assert (
+                len(matching_payments) == 1
+            ), f"Expected exactly 1 payment record for order {order_id}, found {len(matching_payments)}"
             assert matching_payments[0]["payment_status"] == "SUCCESS"
 
             # 5. Verify enrollment count for that student+course is still exactly 1
@@ -834,7 +947,9 @@ class TestPaymentEnrollmentFlow:
             assert enrollment_data.get("status") == "ACTIVE"
 
         finally:
-            run_cleanup(self.client, self.admin_token, student["id"], order_id, course_id)
+            run_cleanup(
+                self.client, self.admin_token, student["id"], order_id, course_id
+            )
 
     def test_full_payment_enrollment_flow(self):
         """
@@ -874,7 +989,9 @@ class TestPaymentEnrollmentFlow:
                 "md5sig": md5sig,
                 "payment_id": f"PAY-{uuid.uuid4().hex[:8].upper()}",
             }
-            res_wb = self.client.post(f"{BASE_URL}/api/payments/webhook", data=webhook_data)
+            res_wb = self.client.post(
+                f"{BASE_URL}/api/payments/webhook", data=webhook_data
+            )
             assert res_wb.status_code == 200
 
             # AC2: Content signed-url returns 200
@@ -887,7 +1004,9 @@ class TestPaymentEnrollmentFlow:
             assert "signed_url" in res_content.json()
 
             # AC4: Duplicate Webhook is idempotent
-            res_dup = self.client.post(f"{BASE_URL}/api/payments/webhook", data=webhook_data)
+            res_dup = self.client.post(
+                f"{BASE_URL}/api/payments/webhook", data=webhook_data
+            )
             assert res_dup.status_code == 200
             assert res_dup.json().get("status") == "SUCCESS"
 
@@ -908,17 +1027,25 @@ class TestPaymentEnrollmentFlow:
             assert res_bad.status_code == 400
 
         finally:
-            run_cleanup(self.client, self.admin_token, student["id"], order_id, course_id)
+            run_cleanup(
+                self.client, self.admin_token, student["id"], order_id, course_id
+            )
 
 
 # ---------------------------------------------------------------------------
 # Standalone CLI Runner (python integration/test_payment_enrollment_flow.py)
 # ---------------------------------------------------------------------------
 def run_cli_tests() -> bool:
-    print(f"\n{BOLD}═══════════════════════════════════════════════════════════════════{RESET}")
-    print(f"{BOLD}   EDURA Integration Test Suite — PayHere Webhook Flow (DDP-#29){RESET}")
+    print(
+        f"\n{BOLD}═══════════════════════════════════════════════════════════════════{RESET}"
+    )
+    print(
+        f"{BOLD}   EDURA Integration Test Suite — PayHere Webhook Flow (DDP-#29){RESET}"
+    )
     print(f"   Target URL: {CYAN}{BASE_URL}{RESET}")
-    print(f"{BOLD}═══════════════════════════════════════════════════════════════════{RESET}\n")
+    print(
+        f"{BOLD}═══════════════════════════════════════════════════════════════════{RESET}\n"
+    )
 
     client = create_test_client()
     admin_token = generate_admin_token()
@@ -932,10 +1059,22 @@ def run_cli_tests() -> bool:
         suite.admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
         tests = [
-            ("AC1: Webhook to Enrollment Chain Verified", suite.test_ac1_webhook_to_enrollment_chain),
-            ("AC2: Content Access Granted After Enrollment", suite.test_ac2_content_access_granted_after_enrollment),
-            ("AC3: Invalid HMAC Blocks Enrollment", suite.test_ac3_invalid_hmac_blocks_enrollment),
-            ("AC4: Duplicate Webhook is Idempotent", suite.test_ac4_duplicate_webhook_is_idempotent),
+            (
+                "AC1: Webhook to Enrollment Chain Verified",
+                suite.test_ac1_webhook_to_enrollment_chain,
+            ),
+            (
+                "AC2: Content Access Granted After Enrollment",
+                suite.test_ac2_content_access_granted_after_enrollment,
+            ),
+            (
+                "AC3: Invalid HMAC Blocks Enrollment",
+                suite.test_ac3_invalid_hmac_blocks_enrollment,
+            ),
+            (
+                "AC4: Duplicate Webhook is Idempotent",
+                suite.test_ac4_duplicate_webhook_is_idempotent,
+            ),
         ]
 
         for idx, (title, func) in enumerate(tests, start=1):
@@ -951,13 +1090,23 @@ def run_cli_tests() -> bool:
                 all_passed = False
 
         if all_passed:
-            print(f"{GREEN}{BOLD}═══════════════════════════════════════════════════════════════════{RESET}")
-            print(f"{GREEN}{BOLD}   🎉 ALL 4 ACCEPTANCE CRITERIA PASSED SUCCESSFULLY! (DDP-#29){RESET}")
-            print(f"{GREEN}{BOLD}═══════════════════════════════════════════════════════════════════{RESET}\n")
+            print(
+                f"{GREEN}{BOLD}═══════════════════════════════════════════════════════════════════{RESET}"
+            )
+            print(
+                f"{GREEN}{BOLD}   🎉 ALL 4 ACCEPTANCE CRITERIA PASSED SUCCESSFULLY! (DDP-#29){RESET}"
+            )
+            print(
+                f"{GREEN}{BOLD}═══════════════════════════════════════════════════════════════════{RESET}\n"
+            )
         else:
-            print(f"{RED}{BOLD}═══════════════════════════════════════════════════════════════════{RESET}")
+            print(
+                f"{RED}{BOLD}═══════════════════════════════════════════════════════════════════{RESET}"
+            )
             print(f"{RED}{BOLD}   ❌ SOME INTEGRATION TESTS FAILED.{RESET}")
-            print(f"{RED}{BOLD}═══════════════════════════════════════════════════════════════════{RESET}\n")
+            print(
+                f"{RED}{BOLD}═══════════════════════════════════════════════════════════════════{RESET}\n"
+            )
 
         return all_passed
 
