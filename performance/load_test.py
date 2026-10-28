@@ -39,7 +39,9 @@ DEFAULT_PATHS = [
 PATHS = [p for p in os.getenv("PERF_PATHS", ",".join(DEFAULT_PATHS)).split(",") if p]
 THRESHOLD_SECONDS = 2.0  # NFR-001
 LATENCY_REQUESTS = int(os.getenv("PERF_LATENCY_REQUESTS", "20"))  # per endpoint
-LATENCY_INTERVAL = float(os.getenv("PERF_LATENCY_INTERVAL", "0.8"))  # seconds between requests
+LATENCY_INTERVAL = float(
+    os.getenv("PERF_LATENCY_INTERVAL", "0.8")
+)  # seconds between requests
 STEPS = [int(s) for s in os.getenv("PERF_STEPS", "1,10,25,50,100").split(",")]
 STEP_SECONDS = float(os.getenv("PERF_STEP_SECONDS", "20"))
 # Stop stepping up once a step looks unhealthy, so the test cannot knock a small server over.
@@ -72,9 +74,16 @@ def summarise(durations, statuses):
         "p95_ms": round(1000 * percentile(durations, 95)),
         "p99_ms": round(1000 * percentile(durations, 99)),
         "mean_ms": round(1000 * statistics.fmean(durations)) if durations else 0,
-        "under_2s_pct": round(100 * sum(1 for d in durations if d < THRESHOLD_SECONDS) / len(durations), 1)
-        if durations
-        else 0.0,
+        "under_2s_pct": (
+            round(
+                100
+                * sum(1 for d in durations if d < THRESHOLD_SECONDS)
+                / len(durations),
+                1,
+            )
+            if durations
+            else 0.0
+        ),
     }
 
 
@@ -93,7 +102,9 @@ async def run_latency():
     rows = {}
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
         for path in PATHS:
-            await timed_get(client, path)  # warm-up (connection and caches), not counted
+            await timed_get(
+                client, path
+            )  # warm-up (connection and caches), not counted
             await asyncio.sleep(LATENCY_INTERVAL)
             durations, statuses = [], []
             for _ in range(LATENCY_REQUESTS):
@@ -119,18 +130,30 @@ async def run_load():
     for users in STEPS:
         durations, statuses = [], []
         limits = httpx.Limits(max_connections=users, max_keepalive_connections=users)
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, limits=limits, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            timeout=REQUEST_TIMEOUT, limits=limits, follow_redirects=True
+        ) as client:
             started = time.perf_counter()
             deadline = started + STEP_SECONDS
-            await asyncio.gather(*(worker(client, deadline, durations, statuses, n) for n in range(users)))
+            await asyncio.gather(
+                *(
+                    worker(client, deadline, durations, statuses, n)
+                    for n in range(users)
+                )
+            )
             elapsed = time.perf_counter() - started
         row = summarise(durations, statuses)
         print(f"  {users} users: statuses {row['status_counts']}", flush=True)
         row["throughput_rps"] = round(row["requests"] / elapsed, 1)
         rows[str(users)] = row
-        if row["error_rate_pct"] > ABORT_ERROR_PCT or row["p95_ms"] > 1000 * ABORT_P95_SECONDS:
+        if (
+            row["error_rate_pct"] > ABORT_ERROR_PCT
+            or row["p95_ms"] > 1000 * ABORT_P95_SECONDS
+        ):
             row["stopped_here"] = True
-            print(f"stopping after {users} users: error rate {row['error_rate_pct']}%, p95 {row['p95_ms']} ms")
+            print(
+                f"stopping after {users} users: error rate {row['error_rate_pct']}%, p95 {row['p95_ms']} ms"
+            )
             break
         await asyncio.sleep(8)  # let the service settle between steps
     return rows
@@ -157,7 +180,13 @@ def main():
     if mode not in ("latency", "load"):
         sys.exit("usage: load_test.py latency|load")
     rows = asyncio.run(run_latency() if mode == "latency" else run_load())
-    out = {"mode": mode, "base_url": BASE_URL, "paths": PATHS, "date": time.strftime("%Y-%m-%d %H:%M:%S"), "rows": rows}
+    out = {
+        "mode": mode,
+        "base_url": BASE_URL,
+        "paths": PATHS,
+        "date": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "rows": rows,
+    }
     print(f"\n{mode} test against {BASE_URL}\n")
     print(table(mode, rows))
     if FAILURES:
@@ -168,6 +197,7 @@ def main():
         (RESULTS / f"{mode}.json").write_text(json.dumps(out, indent=2))
     except OSError:
         pass  # a read-only folder (for example a mounted ConfigMap) must not lose the printed results
+
 
 if __name__ == "__main__":
     main()
