@@ -1,0 +1,36 @@
+name: UI E2E Tests
+
+# Browser tests run against staging, so they need its SECRET_KEY. They start by hand
+# (or after a staging deploy) and never on a pull request, where the secret is unavailable.
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  e2e:
+    name: Playwright critical flows
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: e2e
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - run: npx tsc --noEmit
+      - run: npx playwright install --with-deps chromium
+      - name: Run UI tests
+        env:
+          STAGING_WEB_URL: https://staging.eduralms.com
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: |
+            e2e/playwright-report
+            e2e/results
