@@ -43,6 +43,7 @@ LATENCY_INTERVAL = float(os.getenv("PERF_LATENCY_INTERVAL", "0.8"))  # seconds b
 STEPS = [int(s) for s in os.getenv("PERF_STEPS", "1,10,25,50,100").split(",")]
 STEP_SECONDS = float(os.getenv("PERF_STEP_SECONDS", "20"))
 RESULTS = Path(__file__).parent / "results"
+FAILURES = {}  # transport failures by exception name (status 0 in the tables)
 
 
 def percentile(values, pct):
@@ -77,8 +78,9 @@ async def timed_get(client, path):
     try:
         res = await client.get(f"{BASE_URL}{path}")
         status = res.status_code
-    except httpx.HTTPError:
+    except httpx.HTTPError as exc:
         status = 0
+        FAILURES[type(exc).__name__] = FAILURES.get(type(exc).__name__, 0) + 1
     return time.perf_counter() - start, status
 
 
@@ -145,12 +147,17 @@ def main():
     if mode not in ("latency", "load"):
         sys.exit("usage: load_test.py latency|load")
     rows = asyncio.run(run_latency() if mode == "latency" else run_load())
-    RESULTS.mkdir(exist_ok=True)
     out = {"mode": mode, "base_url": BASE_URL, "paths": PATHS, "date": time.strftime("%Y-%m-%d %H:%M:%S"), "rows": rows}
-    (RESULTS / f"{mode}.json").write_text(json.dumps(out, indent=2))
     print(f"\n{mode} test against {BASE_URL}\n")
     print(table(mode, rows))
-
+    if FAILURES:
+        print(f"\ntransport failures: {FAILURES}")
+    print(json.dumps(out))
+    try:
+        RESULTS.mkdir(exist_ok=True)
+        (RESULTS / f"{mode}.json").write_text(json.dumps(out, indent=2))
+    except OSError:
+        pass  # a read-only folder (for example a mounted ConfigMap) must not lose the printed results
 
 if __name__ == "__main__":
     main()
