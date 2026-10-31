@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-31
+
 ### Added
 - Live staging integration tests for eight service flows (`integration/`) (DDP-#66)
 - Playwright UI tests for the three critical flows: register and log in, browse and enrol, take an exam (`e2e/`, run manually through `e2e.yml`) (DDP-#68)
@@ -42,7 +44,8 @@ Tagged retrospectively for Sprint 5 (16 Jun to 13 Jul 2026).
 ### Added
 - Test suite repository files and Python tooling configuration
 
-[Unreleased]: https://github.com/Edura-LMS-Zynaptrix/edura-tests/compare/v0.3.0...develop
+[Unreleased]: https://github.com/Edura-LMS-Zynaptrix/edura-tests/compare/v1.0.0...develop
+[1.0.0]: https://github.com/Edura-LMS-Zynaptrix/edura-tests/compare/v0.3.0...v1.0.0
 [0.3.0]: https://github.com/Edura-LMS-Zynaptrix/edura-tests/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Edura-LMS-Zynaptrix/edura-tests/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Edura-LMS-Zynaptrix/edura-tests/releases/tag/v0.1.0
