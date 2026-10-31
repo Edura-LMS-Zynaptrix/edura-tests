@@ -1,6 +1,8 @@
 # EDURA Tests — Integration & E2E Testing Suite
 
 [![Tests CI](https://github.com/Edura-LMS-Zynaptrix/edura-tests/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/Edura-LMS-Zynaptrix/edura-tests/actions/workflows/ci.yml)
+[![Backend coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Edura-LMS-Zynaptrix/edura-backend/badges/coverage.json&label=backend%20coverage)](https://github.com/Edura-LMS-Zynaptrix/edura-backend/actions/workflows/ci.yml)
+[![Frontend coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Edura-LMS-Zynaptrix/edura-frontend/badges/coverage.json&label=frontend%20coverage)](https://github.com/Edura-LMS-Zynaptrix/edura-frontend/actions/workflows/ci.yml)
 
 This repository contains the cross-service integration tests, end-to-end smoke tests, and load testing scripts that call multiple microservices of the EDURA Learning Management System (LMS). It is one part of the EDURA project:
 
@@ -12,7 +14,7 @@ This repository contains the cross-service integration tests, end-to-end smoke t
 | **edura-tests** (this repo) | Integration, smoke and performance tests |
 | [edura-documents](https://github.com/Edura-LMS-Zynaptrix/edura-documents) | SRS, SDS, ADRs, retrospectives and test evidence |
 
-> **Coverage badge:** this repository holds the tests themselves and no product code, so it has no code-coverage figure. The coverage badges for the product are on the [edura-backend](https://github.com/Edura-LMS-Zynaptrix/edura-backend#readme) and [edura-frontend](https://github.com/Edura-LMS-Zynaptrix/edura-frontend#readme) READMEs.
+> **Coverage:** this repository holds the tests themselves and no product code, so it has no code-coverage figure of its own. The two coverage badges above show the line coverage of the product these tests exercise: the backend and the frontend, updated by their CI on every push to `develop`. Their READMEs are [edura-backend](https://github.com/Edura-LMS-Zynaptrix/edura-backend#readme) and [edura-frontend](https://github.com/Edura-LMS-Zynaptrix/edura-frontend#readme).
 
 ## Deployed application
 

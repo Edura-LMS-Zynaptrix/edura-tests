@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- README: show the backend and frontend coverage badges, as the guideline requires a coverage badge in every repository (DDP-#85)
+
 ## [1.0.0] - 2026-10-31
 
 ### Added
