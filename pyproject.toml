@@ -1,0 +1,28 @@
+# Lint/format settings for the Python test code (integration/, smoke/).
+# Kept identical to edura-backend/pyproject.toml, see
+# documents/standards/coding-standards.md.
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "C",    # flake8-comprehensions
+    "B",    # flake8-bugbear
+]
+ignore = ["B008", "E501", "B904", "E402"]
+
+[tool.ruff.lint.per-file-ignores]
+# End-to-end flows and the in-process mock gateway are long, linear scenarios;
+# splitting them would hurt readability, so cyclomatic complexity is not enforced.
+"smoke/*" = ["C901"]
+"integration/*" = ["C901"]
+
+[tool.black]
+line-length = 88
+target-version = ['py312']
